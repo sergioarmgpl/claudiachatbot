@@ -1,0 +1,61 @@
+FROM openfaas/of-watchdog:0.7.2 as watchdog
+FROM ubuntu:18.04
+
+COPY --from=watchdog /fwatchdog /usr/bin/fwatchdog
+RUN chmod +x /usr/bin/fwatchdog
+
+#FROM python:3.7-alpine
+#FROM tf
+
+#Ubuntu clean
+RUN apt-get update
+RUN apt-get install locales
+RUN locale-gen en_US.UTF-8
+ENV LANG en_US.UTF-8
+ENV LANGUAGE en_US:en
+ENV LC_ALL en_US.UTF-8
+
+RUN apt-get autoremove -y python2.7
+RUN apt-get install -y python3
+RUN apt-get install -y python3-pip
+RUN apt-get install -y nano
+RUN apt-get install -y curl
+RUN apt-get install -y stunnel4
+
+#RUN apk --no-cache add musl-dev gcc make
+
+WORKDIR /root/
+COPY requirements.txt .
+RUN pip3 install -r requirements.txt
+COPY index.py .
+
+RUN mkdir -p function
+RUN touch ./function/__init__.py
+WORKDIR /root/function/
+COPY function/requirements.txt  .
+RUN pip3 install -r requirements.txt
+
+
+#uninstall
+#RUN apt-get autoremove -y python3-pip
+RUN apt-get autoremove -y nano
+RUN apt-get autoremove -y curl
+
+#clean
+RUN apt-get clean
+RUN apt-get purge
+
+
+
+WORKDIR /root/
+COPY function function
+
+ENV fprocess="python3 index.py"
+
+ENV cgi_headers="true"
+ENV mode="http"
+ENV upstream_url="http://127.0.0.1:5000"
+
+HEALTHCHECK --interval=5s CMD [ -e /tmp/.lock ] || exit 1
+
+CMD ["fwatchdog"]
