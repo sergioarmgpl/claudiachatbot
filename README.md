@@ -134,4 +134,184 @@ Pre-check before linkerd installation, look if there is not another installation
 linkerd check --pre
 ```
 Install Linkerd
+```
+linkerd install | kubectl apply -f -
+```
+Check the installation
+```
+linkerd check
+```
+Check everything is deployed
+```
+kubectl -n linkerd get deploy
+```
+Accesing to the Linkerd Dashboard
+```
+linkerd dashboard
+```
+## Securing the Linkerd dashboard
+```
+apt-get install -y apache2-utils
+```
+Create auth credentials with htpasswd
+```
+htpasswd -c auth admin    [Enter password for admin, stored in the auth file]
+```
+```
+kubectl -n linkerd create secret generic basic-auth --from-file auth 
+```
+Create public-linkerd.yaml
+```
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/auth-type: basic
+    nginx.ingress.kubernetes.io/auth-secret: basic-auth
+    nginx.ingress.kubernetes.io/upstream-vhost: $service_name.$namespace.svc.cluster.local:8084
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Origin "";
+      proxy_hide_header l5d-remote-ip;
+      proxy_hide_header l5d-server-id;
+  name: public-linkerd
+  namespace: linkerd
+spec:
+  rules:
+    - host: linkerd.curzona.net
+      http:
+        paths:
+          - backend:
+              serviceName: linkerd-web
+              servicePort: 8084
+            path: /
+```
+Create a ingress with password protection with the next command:
+```
+kubectl -n linkerd create -f public-linkerd.yaml
+```
 
+## Tutorial Bot
+- https://github.com/slackapi/python-slackclient/blob/master/tutorial/03-responding-to-slack-events.md
+- https://readthedocs.org/projects/python-slackclient/downloads/pdf/latest/
+## Essentials packages for Slack chatbots in python
+```
+apt-get install python3-dev
+apt-get install python3-pip
+```
+## Creating a serverless Slack chatbot with python with OpenFaaS
+```
+apt-get install docker.io
+```
+```
+mkdir faas
+```
+```
+cd faas
+```
+```
+faas template pull https://github.com/openfaas-incubator/python-flask-template
+```
+```
+faas new --lang python3-flask chatbot
+```
+
+## Create a Slack bot with Slack API
+1. Create a Slack app(https://api.slack.com/apps/new) (if you don't already have one).
+2. Add a Bot User and configure your bot user with some basic info (display name, default username and its online presence).
+3. Once you've completed these fields, click Add Bot User.
+4. Next, give your bot access to the Events API.
+5. Finally, add your bot to your workspace.
+
+## Inject OpenFaaS pods with linkerd
+```
+kubectl -n openfaas get deploy gateway -o yaml | linkerd inject --skip-outbound-ports=4222 - | kubectl apply -f -
+kubectl -n openfaas get deploy/basic-auth-plugin -o yaml | linkerd inject - | kubectl apply -f -
+kubectl -n openfaas get deploy/faas-idler -o yaml | linkerd inject - | kubectl apply -f -
+kubectl -n openfaas get deploy/queue-worker -o yaml | linkerd inject  --skip-outbound-ports=4222 - | kubectl apply -f -
+```
+```
+kubectl annotate namespace openfaas linkerd.io/inject=enabled
+```
+Inject ingress controller
+```
+kubectl -n openfaas get deploy/nginx-ingress-controller -o yaml | linkerd inject - | kubectl apply -f -
+```
+Add the following in the annotations block
+```
+kubectl -n openfaas edit deployment nginx-ingress-controller
+nginx.ingress.kubernetes.io/configuration-snippet: |
+  proxy_set_header l5d-dst-override gateway.openfaas.svc.cluster.local:8080;
+  proxy_hide_header l5d-remote-ip;
+  proxy_hide_header l5d-server-id;
+```
+Deploy 3 services echo chatbot-root is a dummy service
+```
+faas-cli deploy --gateway=http://openfaas.curzona.net --image hub.cloudsociety.dev/openfaas/chatbot:latest --name chatbot-green
+faas-cli deploy --gateway=http://openfaas.curzona.net --image hub.cloudsociety.dev/openfaas/chatbot:latest --name chatbot-blue
+faas-cli deploy --gateway=http://openfaas.curzona.net --image hub.cloudsociety.dev/openfaas/chatbot:latest --name chatbot-root
+```
+Test the access to the services
+```
+curl http://openfaas.curzona.net/function/chatbot-green.openfaas/slack/events
+curl http://openfaas.curzona.net/function/chatbot-blue.openfaas/slack/events
+curl http://openfaas.curzona.net/function/chatbot.openfaas/slack/events
+```
+## Inject the green and blue chatbots
+```
+kubectl get -n openfaas deployment chatbot-root -o yaml \
+  | linkerd inject - \
+  | kubectl apply -f -
+```
+```
+kubectl get -n openfaas deployment chatbot-green -o yaml \
+  | linkerd inject - \
+  | kubectl apply -f -
+```
+```
+kubectl get -n openfaas deployment chatbot-blue -o yaml \
+  | linkerd inject - \
+  | kubectl apply -f -
+```
+## Apply the traffic splitting rule
+```
+kubectl apply -f -
+apiVersion: split.smi-spec.io/v1alpha1
+kind: TrafficSplit
+metadata:
+  name: function-split
+  namespace: openfaas
+spec:
+  # The root service that clients use to connect to the destination application.
+  service: chatbot-root
+  # Services inside the namespace with their own selectors, endpoints and configuration.
+  backends:
+  - service: chatbot-blue
+    weight: 500m
+  - service: chatbot-green
+    weight: 500m
+```
+## Sending traffic with a loop
+```
+for i in {0..10}; do  curl http://openfaas.curzona.net/function/echo.openfaas; done    
+```
+## Removing the traffic splitting
+```
+kubectl delete -f -
+apiVersion: split.smi-spec.io/v1alpha1
+kind: TrafficSplit
+metadata:
+  name: function-split
+  namespace: openfaas
+spec:
+  # The root service that clients use to connect to the destination application.
+  service: echo
+  # Services inside the namespace with their own selectors, endpoints and configuration.
+  backends:
+  - service: echo-blue
+    weight: 100m
+  - service: echo-green
+    weight: 900m
+```
+# Resourses
+[install linkerd2 with observability in OpenFaaS] (https://github.com/openfaas-incubator/openfaas-linkerd2)
