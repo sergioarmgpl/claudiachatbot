@@ -1,0 +1,9 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://openfaas.curzona.net
+functions:
+  chatbot:
+    lang: python3-flask-debian
+    handler: ./chatbot
+    image: hub.cloudsociety.dev/openfaas/chatbot:latest
